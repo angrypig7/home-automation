@@ -1,3 +1,15 @@
+# Files that generally should be ignored
+.git/
+Thumbs.db
+.idea/
+.vscode
+workspace.xml
+
+secrets.h
+
+# Project specific files
+
+
 # Ignore list for Eagle, a PCB layout tool
 
 # Backup files
