@@ -7,18 +7,27 @@
 
 #define BLYNK_PRINT Serial
 
-#define PIN_LED1         0
-#define PIN_LED2         2
-#define PIN_LED3         14
+#define PIN_LED1            0
+#define PIN_LED2            2
+#define PIN_LED3            14
 
-#define PIN_SW1          15
-#define PIN_IN1          5
-#define PIN_CONTROL_IN   12
-#define PIN_CONTROL_OUT  13
+#define PIN_SW1             15
+#define PIN_IN1             5
+#define PIN_CONTROL_IN      12
+#define PIN_CONTROL_OUT     13
+
+#define VPIN_MANUAL_SWITCH  V0
+#define VPIN_STATUS_REPORT  V1
+#define VPIN_RSSI_REPORT    V2
+#define VPIN_TIME_START     V3
+#define VPIN_TIME_END       V5
+
 
 WidgetLED led1(V1);
 
 BlynkTimer timer;
+
+uint8_t control_status = 0;  // current plant LED status
 
 void setup()
 {
@@ -52,6 +61,7 @@ void setup()
   //Blynk.begin(auth, ssid, pass, IPAddress(192,168,1,100), 8080);
 
   timer.setInterval(1000L, signalStrengthReport);
+  timer.setInterval(500L, statusReport);
 
   Serial.println("ESP8266 initialized");
 
@@ -126,9 +136,15 @@ void LED_process()
   
 }
 
+
 void signalStrengthReport()
 {
-  Blynk.virtualWrite(V0, WiFi.RSSI());
+  Blynk.virtualWrite(VPIN_RSSI_REPORT, WiFi.RSSI());
+}
+
+void statusReport()
+{
+  Blynk.virtualWrite(VPIN_STATUS_REPORT, control_status);
 }
 
 BLYNK_WRITE(V1)
@@ -146,3 +162,4 @@ BLYNK_WRITE(V1)
     digitalWrite(PIN_CONTROL_OUT, LOW);
   }
 }
+
