@@ -4,8 +4,11 @@
 
 #include <ESP8266WiFi.h>
 #include <BlynkSimpleEsp8266_SSL.h>
+#include <TimeLib.h>
+#include <WidgetRTC.h>
 
 #define BLYNK_PRINT Serial
+#define ALLOW_MANUAL_CONTROL false
 
 #define PIN_LED1            0
 #define PIN_LED2            2
@@ -19,15 +22,21 @@
 #define VPIN_MANUAL_SWITCH  V0
 #define VPIN_STATUS_REPORT  V1
 #define VPIN_RSSI_REPORT    V2
-#define VPIN_TIME_START     V3
-#define VPIN_TIME_END       V5
+#define VPIN_TIME           V10
 
-
-WidgetLED led1(V1);
 
 BlynkTimer timer;
+WidgetRTC rtc;
 
-uint8_t control_status = 0;  // current plant LED status
+
+bool status_external_LED_control = 0;  // current plant LED status
+// bool previous_timer_control_status = 0;  // used to switch back to auto mode
+bool flag_overwrite_timer_LED_control = 0;  // 1 if user modifies the timer
+
+uint32_t time_current = 0;  // in seconds since 00:00
+uint32_t time_start = 0;  // in seconds since 00:00
+uint32_t time_stop = 0;  // in seconds since 00:00
+
 
 void setup()
 {
@@ -35,21 +44,7 @@ void setup()
 
   Serial.begin(115200);
 
-  pinMode(PIN_LED1, OUTPUT);
-  pinMode(PIN_LED2, OUTPUT);
-  pinMode(PIN_LED3, OUTPUT);
-
-  digitalWrite(PIN_LED1, HIGH);  // all LEDs off
-  digitalWrite(PIN_LED2, HIGH);
-  digitalWrite(PIN_LED3, HIGH);
-
-  pinMode(PIN_SW1, INPUT);
-  pinMode(PIN_IN1, INPUT);
-  pinMode(PIN_CONTROL_IN, INPUT);
-  pinMode(PIN_CONTROL_OUT, OUTPUT);
-
-  digitalWrite(PIN_CONTROL_OUT, LOW);  // default state to low
-  digitalWrite(PIN_LED2, LOW);  // Blynk connection check LED to on
+  init_pins();
 
   Serial.println();
   Serial.println();
@@ -60,12 +55,13 @@ void setup()
   //Blynk.begin(auth, ssid, pass, "blynk-cloud.com", 80);
   //Blynk.begin(auth, ssid, pass, IPAddress(192,168,1,100), 8080);
 
-  timer.setInterval(1000L, signalStrengthReport);
-  timer.setInterval(500L, statusReport);
+  timer.setInterval(1000L, report_RSSI);
+  timer.setInterval(500L, report_status);
+  timer.setInterval(1000L, process_plant_LED);
 
   Serial.println("ESP8266 initialized");
 
-  animateLED();
+  animate_LED();
   Serial.print("RSSI: ");
   Serial.println(WiFi.RSSI());
 }
@@ -82,7 +78,27 @@ void loop()
 }
 
 
-void animateLED()
+void init_pins()
+{
+  pinMode(PIN_LED1, OUTPUT);
+  pinMode(PIN_LED2, OUTPUT);
+  pinMode(PIN_LED3, OUTPUT);
+
+  digitalWrite(PIN_LED1, HIGH);  // all LEDs off
+  digitalWrite(PIN_LED2, HIGH);
+  digitalWrite(PIN_LED3, HIGH);
+
+  pinMode(PIN_SW1, INPUT);
+  pinMode(PIN_IN1, INPUT);
+  pinMode(PIN_CONTROL_IN, INPUT);
+  pinMode(PIN_CONTROL_OUT, OUTPUT);
+
+  digitalWrite(PIN_CONTROL_OUT, LOW);  // default state to low
+  digitalWrite(PIN_LED2, LOW);  // Blynk connection check LED to on
+}
+
+
+void animate_LED()
 {
   digitalWrite(PIN_LED1, HIGH);
   digitalWrite(PIN_LED2, HIGH);
@@ -137,29 +153,104 @@ void LED_process()
 }
 
 
-void signalStrengthReport()
+void report_RSSI()
 {
   Blynk.virtualWrite(VPIN_RSSI_REPORT, WiFi.RSSI());
 }
 
-void statusReport()
+void report_status()
 {
-  Blynk.virtualWrite(VPIN_STATUS_REPORT, control_status);
+  Blynk.virtualWrite(VPIN_STATUS_REPORT, status_external_LED_control);
 }
 
-BLYNK_WRITE(V1)
-{
-  // Serial.print("Blynk-V1: ");
-  // Serial.println(param.asStr());
 
-  if(param.asInt() == true)
+void process_plant_LED()
+{
+  time_current = hour()*60*60 + minute()*60 + second();
+
+  if(flag_overwrite_timer_LED_control == 0)  // auto timer control; just check time
   {
+    if(time_current>=time_start && time_current<=time_stop)
+    {
+      control_plant_LED(1);
+    }else
+    {
+      control_plant_LED(0);
+    }
+  }else  // manual control set; check to switch back to auto mode
+  // TODO: this part has errors
+  // check "ALLOW_MANUAL_CONTROL" flag before debugging
+  {
+    bool is_time_set = time_current>=time_start&&time_current<=time_stop;
+    if(is_time_set == status_external_LED_control)
+    {
+      ;
+    }else
+    {
+      flag_overwrite_timer_LED_control = 0;
+      process_plant_LED();
+    }
+  }
+}
+
+void control_plant_LED(bool parameter_control)
+{
+  if(parameter_control == 1)
+  {
+    status_external_LED_control = 1;
     digitalWrite(PIN_LED3, LOW);
     digitalWrite(PIN_CONTROL_OUT, HIGH);
   }else
   {
+    status_external_LED_control = 0;
     digitalWrite(PIN_LED3, HIGH);
     digitalWrite(PIN_CONTROL_OUT, LOW);
   }
+}
+
+
+BLYNK_CONNECTED()
+{
+  rtc.begin();
+}
+
+BLYNK_WRITE(VPIN_MANUAL_SWITCH)
+{
+  flag_overwrite_timer_LED_control = ALLOW_MANUAL_CONTROL;
+
+  if(param.asInt() == true)
+  {
+    control_plant_LED(1);
+  }else
+  {
+    control_plant_LED(0);
+  }
+
+  // process_plant_LED();
+}
+
+BLYNK_WRITE(VPIN_TIME)
+{
+  TimeInputParam t(param);
+
+  flag_overwrite_timer_LED_control = 0;
+
+  if(t.hasStartTime())
+  {
+    time_start = t.getStartHour()*60*60 + t.getStartMinute()*60 + t.getStartSecond();
+  }
+
+  if(t.hasStopTime())
+  {
+    time_stop = t.getStopHour()*60*60 + t.getStopMinute()*60 + t.getStopSecond();
+  }
+
+  time_current = hour()*60*60 + minute()*60 + second();
+
+  Serial.print("time_curr:  ");  Serial.println(time_current);
+  Serial.print("time_start: ");  Serial.println(time_start);
+  Serial.print("time_stop:  ");  Serial.println(time_stop);
+
+  process_plant_LED();
 }
 
