@@ -3,6 +3,9 @@
 #include "secrets.h"
 
 #include <ESP8266WiFi.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+
 #include <BlynkSimpleEsp8266_SSL.h>
 #include <TimeLib.h>
 #include <WidgetRTC.h>
@@ -25,6 +28,9 @@
 #define VPIN_TIME           V10
 
 
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "time.google.com", 32400, 3600000);
+
 BlynkTimer timer;
 WidgetRTC rtc;
 
@@ -36,6 +42,9 @@ bool flag_overwrite_timer_LED_control = 0;  // 1 if user modifies the timer
 uint32_t time_current = 0;  // in seconds since 00:00
 uint32_t time_start = 0;  // in seconds since 00:00
 uint32_t time_stop = 0;  // in seconds since 00:00
+
+const int time_manual_start = 8;
+const int time_manual_stop = 20;
 
 
 void setup()
@@ -50,10 +59,31 @@ void setup()
   Serial.println();
   Serial.println("ESP8266 initializing Blynk Service...");
 
-  Blynk.begin(auth, ssid, pass);
+
+  // Blynk.connect(auth, ssid, pass);
+
+  Blynk.connectWiFi(ssid, pass);
+  Serial.println("ESP8266 connected to WiFi");
+
+  Blynk.config(auth);
+  Serial.println("BLynk config done");
+
+  // bool res_conn = false;
+  // while(res_conn == false)
+  // {
+  //   res_conn = Blynk.connect();
+  //   if(res_conn == false)
+  //   {
+  //     Serial.println("Blynk server connection failed! Retrying...");
+  //   }
+  // }
+  // Serial.println("Blynk server connection established!");
+  // Blynk.begin(auth, ssid, pass);
   // You can also specify server:
   //Blynk.begin(auth, ssid, pass, "blynk-cloud.com", 80);
   //Blynk.begin(auth, ssid, pass, IPAddress(192,168,1,100), 8080);
+
+  timeClient.begin();
 
   timer.setInterval(1000L, report_RSSI);
   timer.setInterval(500L, report_status);
@@ -68,13 +98,15 @@ void setup()
 
 void loop()
 {
-  Blynk.run();
+  timeClient.update();
 
   timer.run();
 
   LED_process();
 
-  // delay(120);
+  // Blynk.run();
+
+  // delay(500);
 }
 
 
@@ -166,31 +198,39 @@ void report_status()
 
 void process_plant_LED()
 {
-  time_current = hour()*60*60 + minute()*60 + second();
-
-  if(flag_overwrite_timer_LED_control == 0)  // auto timer control; just check time
+  if(timeClient.getHours()>=time_manual_start && timeClient.getHours()<time_manual_stop)
   {
-    if(time_current>=time_start && time_current<=time_stop)
-    {
-      control_plant_LED(1);
-    }else
-    {
-      control_plant_LED(0);
-    }
-  }else  // manual control set; check to switch back to auto mode
-  // TODO: this part has errors
-  // check "ALLOW_MANUAL_CONTROL" flag before debugging
+    control_plant_LED(1);
+  }else
   {
-    bool is_time_set = time_current>=time_start&&time_current<=time_stop;
-    if(is_time_set == status_external_LED_control)
-    {
-      ;
-    }else
-    {
-      flag_overwrite_timer_LED_control = 0;
-      process_plant_LED();
-    }
+    control_plant_LED(0);
   }
+  
+  // time_current = hour()*60*60 + minute()*60 + second();
+
+  // if(flag_overwrite_timer_LED_control == 0)  // auto timer control; just check time
+  // {
+  //   if(time_current>=time_start && time_current<=time_stop)
+  //   {
+  //     control_plant_LED(1);
+  //   }else
+  //   {
+  //     control_plant_LED(0);
+  //   }
+  // }else  // manual control set; check to switch back to auto mode
+  // // TODO: this part has errors
+  // // check "ALLOW_MANUAL_CONTROL" flag before debugging
+  // {
+  //   bool is_time_set = time_current>=time_start&&time_current<=time_stop;
+  //   if(is_time_set == status_external_LED_control)
+  //   {
+  //     ;
+  //   }else
+  //   {
+  //     flag_overwrite_timer_LED_control = 0;
+  //     process_plant_LED();
+  //   }
+  // }
 }
 
 void control_plant_LED(bool parameter_control)
